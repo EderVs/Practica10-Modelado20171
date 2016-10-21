@@ -82,7 +82,7 @@ class ServerWindow(QtGui.QMainWindow):
         # Lista con todas las serpientes del juego
         self.snakes = []
         self.snakes_len = len(self.snakes)
- 
+        self.current_id = 0 
         # Que no resalten las celdas al dar click
         self.tableWidget.setSelectionMode(QtGui.QTableWidget.NoSelection)
         # Método para expandir las celdas de la tabla de forma que estén bien
@@ -379,7 +379,8 @@ class ServerWindow(QtGui.QMainWindow):
         """
             Agrega una serpiente en el juego
         """
-        new_snake_id = str(len(self.snakes))
+        new_snake_id = str(current_id)
+        current_id += 1
         new_snake = Snake(new_snake_id)
         correct_snake = False
         while not correct_snake:
