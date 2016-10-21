@@ -9,7 +9,9 @@
 import sys
 
 from PyQt4 import QtGui, QtCore, uic
-
+from xmlrpc.server import SimpleXMLRPCServer
+from random import randint
+import uuid
 
 class Snake():
     """
@@ -17,19 +19,21 @@ class Snake():
     """
     # red, green, blue son utilizados para definir el color de la serpiente
     # de forma
-    def __init__(self, red, green, blue):
+    def __init__(self, id):
         """
             Constructor de la clase Snake
             
             red, green, blue son utilizados para definir el color de la serpiente
             de forma que sea como código rgba
         """
-        # Los guardamos en una tupla y así representamos el color
-        self.color = (red, green, blue)
+        # Creamos su id
+        self.id = id
+        # Crearemos el color de manera aleatoria
+        red, green, blue = randint(0, 255), randint(0, 255), randint(0, 255)
+        # Los guardamos en un diccionario y así representamos el color
+        self.color = {'r': red, 'g': green, 'b': blue}
         # Representaremos la serpiente como una lista de listas de 2 elementos
-        self.body = [[1,0], [2,0], [3,0], [4,0], [5,0], [6,0], [7,0], [8,0],
-            [9, 0]
-        ]
+        self.body = []
         # Esto lo hacemos para evitar estar calculando siempre el tamaño del
         # cuerpo de la serpiente
         self.body_len = len(self.body)
@@ -38,7 +42,20 @@ class Snake():
         # 1: Derecha
         # 2: Abajo
         # 3: Izquierda
-        self.direction = 2
+        self.direction = 0
+
+    def get_dict(self):
+        """
+            Nos da la información de la serpiente en un diccionario
+        """
+        snake_dict = {
+            'id': self.id,
+            # Crearemos una lista de tuplas donde vengan las coordenadas de la
+            # serpiente 
+            'camino': [(x, y) for x, y in self.body],
+            'color': self.color
+        }
+        return snake_dict
 
 
 class ServerWindow(QtGui.QMainWindow):
@@ -56,6 +73,10 @@ class ServerWindow(QtGui.QMainWindow):
         # Vamos a poner unos atributos a la clase
         # Variables para saber el estado del juego
         self.game_started = self.game_paused = False
+        # Se inicia el servidor sólo al oprimir el boton
+        self.pushButton.clicked.connect(self.start_server)
+        # agregamos el timer del servidor
+        self.timer_server = 0
         # Para que la ventana tenga contadores
         self.timer = None
         # Lista con todas las serpientes del juego
@@ -134,7 +155,43 @@ class ServerWindow(QtGui.QMainWindow):
         """
         value = self.spinBox.value()
         self.timer.setInterval(value)
-    
+
+    def start_server(self):
+        """
+            Método encarfado de crear y empezar el servidor xmlrpc. Se le da una
+            ip y un puerto. Además agregamos las funciones que tendran acceso
+        """
+        ip = self.lineEdit.text()
+        port = self.spinBox_4.value()
+        self.server = SimpleXMLRPCServer((ip, port))
+        if port == 0:
+            port = self.server.server_address[1]
+        # Ponemos en la interfaz el puerto que tiene
+        self.spinBox_4.setValue(port)
+        # Ahora vamos a bloquear las configuraciones para que no sean
+        # modificadas
+        self.spinBox_4.setReadOnly(True)
+        self.lineEdit.setReadOnly(True)
+        self.pushButton.setEnabled(False)
+        # Vamos a agregar las funciones del servidor
+        # Están en español porque así los pide la práctica
+        self.server.register_function(self.ping)
+        self.server.register_function(self.yo_juego)
+        self.server.register_function(self.cambia_direccion)
+        self.server.register_function(self.estado_del_juego)
+        # Intervalo del servidor
+        self.server.timeout = 0
+        self.timer_server = QtCore.QTimer(self)
+        self.timer_server.timeout.connect(self.do_something_server)
+        # Inicializamos el Timer con el intervalo del servidor
+        self.timer_server.start(self.server.timeout)
+
+    def do_something_server(self):
+        """
+            El servidor va ejecutando las peticiones que están en la cola.
+        """
+        self.server.handle_request()
+
     def change_game_state(self):
         """
             Inicializa o pausa el juego
@@ -147,9 +204,7 @@ class ServerWindow(QtGui.QMainWindow):
 
             # Creamos la primer serpiente y la agregamos nuestra lista de
             # serpientes en el juego
-            snake = Snake(0, 0, 0)
-            self.snakes.append(snake)
-            self.snakes_len += 1
+            snake = self.add_snake()
             # La pintamos en la tabla
             self.draw_snakes()
             # Le asignamos la velocidad
@@ -202,7 +257,7 @@ class ServerWindow(QtGui.QMainWindow):
             for body_part in snake.body:
                 self.tableWidget.item(body_part[0], body_part[1]).\
                     setBackground(QtGui.QColor(
-                        snake.color[0], snake.color[1], snake.color[2]
+                        snake.color['r'], snake.color['g'], snake.color['b']
                 ))
 
     def move_snakes(self):
@@ -312,6 +367,97 @@ class ServerWindow(QtGui.QMainWindow):
                     if snake.direction != 1:
                         snake.direction = 3
         return QtGui.QMainWindow.eventFilter(self, source, event)
+
+    def ping(self):
+        """
+            Utilizado por el cliente.
+            Método que sólo regresa ¡Pong!
+        """
+        return '¡Pong!'
+
+    def add_snake(self):
+        """
+            Agrega una serpiente en el juego
+        """
+        new_snake_id = str(len(self.snakes))
+        new_snake = Snake(new_snake_id)
+        correct_snake = False
+        while not correct_snake:
+            # Creamos las serpientes de forma horizontal
+            head_y = randint(1, self.tableWidget.rowCount()/2)
+            body_1_y = head_y + 1
+            body_2_y = head_y + 2
+            snake_x = randint(1, self.tableWidget.columnCount()-1)
+            head, body_1, body_2 = (
+                [head_y, snake_x], [body_1_y, snake_x],[body_2_y, snake_x]
+            )
+            # Verificamos que no choque con alguna otra serpiente
+            for snake in self.snakes:
+                if (head in snake.body or body_1 in snake.body
+                    or body_2 in snake.body):
+                    break
+            else:
+                correct_snake = True
+            if correct_snake:
+                new_snake.body = [body_2, body_1, head]
+        self.snakes.append(new_snake)
+        return new_snake
+
+
+    def yo_juego(self):
+        """
+            Utilizado por el cliente.
+            Registra una serpiente
+        """
+        new_snake = self.add_snake()
+        snake_dict = {'id': new_snake.id, 'color': new_snake.color}
+        return snake_dict
+
+    def cambia_direccion(self, id, direction):
+        """
+            Utilizado por el cliente.
+            Cambia la direccion de una serpiente
+        """
+        # Buscamos la serpiente con el id que queremos
+        for snake in self.snakes:
+            if snake.id == id:
+                if direction == 0 and snake.direction != 2:
+                    snake.direction = direction
+                elif direction == 1 and snake.direction != 3:
+                    snake.direction = direction
+                elif direction == 2 and snake.direction != 0:
+                    snake.direction = direction
+                elif direction == 3 and snake.direction != 1:
+                    snake.direction = direction
+        # Esto es porque las funciones de servidor deben de regresar algo
+        # siempre
+        return True
+
+    def get_snakes(self):
+        """
+            Nos trae la lista de serpientes dentro del juego
+        """
+        snakes = []
+        for snake in self.snakes:
+            snakes.append(snake.get_dict())
+        return snakes
+
+    def estado_del_juego(self):
+        """
+            Utilizado por el cliente.
+            Regresa la información importante del juego
+        """
+        game_dict = {
+            'espera': self.server.timeout,
+            'tamx': self.tableWidget.columnCount(),
+            'tamy': self.tableWidget.rowCount(),
+            'viboras': self.get_snakes()
+        }
+        return game_dict
+
+    def update_server_timeout(self):
+        self.server.timeout = self.timer.value()
+        self.timer_server.setInterval(self.time.value())
 
 
 if __name__ == '__main__':
